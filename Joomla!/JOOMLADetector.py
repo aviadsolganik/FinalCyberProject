@@ -55,15 +55,16 @@ class JOOMLADetector(object):
         return 'False', 'probably it is not a Joomla! website'
 
     def is_joomla(self, urls=None, proxies=None, timeout=5, retries=0):
-        '''
+        """
         This function detects if the website runs over joomla
         :param urls: URLs to analyze; make sure the URLs are relevant for the domain
         :param proxies: working via HTTP proxies. If None, the constructor's proxies are used (if any)
         :param retries: The number of tries that each HTTP request will be sent until it will succeed
         :param timeout: How much time each HTTP request will wait for an answer
         :return: boolean: (whether the domain operates over JOOMLA!)
-        '''
-        r = requests.get('http://' + str(self._domain))
+        """
+        '''figure out if this site is http or https'''
+        r = HTTPRequestHandler().send_http_request(method='get', url='http://' + str(self._domain))
         url = r.url
         if not urls:
             http_handler = HTTPRequestHandler(proxies=proxies, retries=retries, timeout=timeout)
@@ -87,12 +88,13 @@ class JOOMLADetector(object):
                 else:
                     if "joomla!" in str(response.content).lower():
                         return True
-        '''finaly if i cant detect whether it is joomla or not'''
-        url = 'http://jornot.com/index.php?check-site=' +str(self._domain)
+        '''finally if i cant detect whether it is joomla or not'''
+        url = 'http://jornot.com/index.php?check-site=' + str(self._domain)
         http_handler = HTTPRequestHandler(proxies=proxies, retries=retries, timeout=timeout)
         response = http_handler.send_http_request(method='get', url=url)
-        if response.text.__contains__('Yes, this is Joomla!'):
-            return True
+        if response is not None:
+            if 'Yes, this is Joomla!' in response.text:
+                return True
         return False
 
     def get_version(self, timeout=5, retries=0):
@@ -102,57 +104,57 @@ class JOOMLADetector(object):
         :param timeout: How much time each HTTP request will wait for an answer
         :return: string: (return the version of this JOMMMLA website)
         '''
-        '''fegure out if this site is http or https'''
-        r = requests.get('http://' + str(self._domain))
+        '''figure out if this site is http or https'''
+        r = HTTPRequestHandler().send_http_request(method='get', url='http://' + str(self._domain))
         url = r.url
 
         '''check source code first'''
         http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
-        response = http_handler.send_http_request(method='get', url=url)
-        if response.text.__contains__('Copyright (C) 2005 - 2008 Open Source Matters') or \
-                response.text.__contains__('Copyright (C) 2005 - 2007 Open Source Matters'):
+        response = http_handler.send_http_request(method='get', url=url).text
+        if 'Copyright (C) 2005 - 2008 Open Source Matters' in response or \
+                'Copyright (C) 2005 - 2007 Open Source Matters' in response:
             return '1.0'
-        elif response.text.__contains__('Joomla! 1.5 - Open Source Content Management'):
+        elif 'Joomla! 1.5 - Open Source Content Management' in response:
             return '1.5'
 
         '''check response with - /templates/system/css/system.css'''
         templates_url = url + '/templates/system/css/system.css'
         http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
-        response = http_handler.send_http_request(method='get', url=templates_url)
-        if response.text.__contains__('OpenID icon style') or \
-                response.text.__contains__('@copyright Copyright (C) 2005 – 2010 Open Source Matters'):
+        response = http_handler.send_http_request(method='get', url=templates_url).text
+        if 'OpenID icon style' in response or \
+                '@copyright Copyright (C) 2005 – 2010 Open Source Matters' in response:
             return '1.0'
-        elif response.text.__contains__('@version $Id: system.css 20196 2011-01-09 02:40:25Z ian $'):
+        elif '@version $Id: system.css 20196 2011-01-09 02:40:25Z ian $' in response:
             return '1.6'
-        elif response.text.__contains__('@version $Id: system.css 21322 2011-05-11 01:10:29Z dextercowley $'):
+        elif '@version $Id: system.css 21322 2011-05-11 01:10:29Z dextercowley $' in response:
             return '1.7'
-        elif response.text.__contains__(' @copyright Copyright (C) 2005 – 2012 Open Source Matters'):
+        elif ' @copyright Copyright (C) 2005 – 2012 Open Source Matters' in response:
             return '2.5'
 
         '''check response with - /media/system/js/mootools-more.js'''
         mootools_url = url + '/media/system/js/mootools-more.js'
         http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
-        response = http_handler.send_http_request(method='get', url=mootools_url)
-        if response.text.__contains__('MooTools.More={version:”1.3.0.1″'):
+        response = http_handler.send_http_request(method='get', url=mootools_url).text
+        if 'MooTools.More={version:”1.3.0.1″' in response:
             return '1.6'
-        elif response.text.__contains__('MooTools.More={version:”1.3.2.1″'):
+        elif 'MooTools.More={version:”1.3.2.1″' in response:
             return '1.7'
 
         '''check response with - /language/en-GB/en-GB.ini'''
         language_url = url + '/language/en-GB/en-GB.ini'
         http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
-        response = http_handler.send_http_request(method='get', url=language_url)
-        if response.text.__contains__('# $Id: en-GB.ini 11391 2009-01-04 13:35:50Z ian $'):
+        response = http_handler.send_http_request(method='get', url=language_url).text
+        if '# $Id: en-GB.ini 11391 2009-01-04 13:35:50Z ian $' in response:
             return '1.5.26'
-        elif response.text.__contains__('$Id: en-GB.ini 20196 2011-01-09 02:40:25Z ian $'):
+        elif '$Id: en-GB.ini 20196 2011-01-09 02:40:25Z ian $' in response:
             return '1.6.0'
-        elif response.text.__contains__('$Id: en-GB.ini 20990 2011-03-18 16:42:30Z infograf768 $'):
+        elif '$Id: en-GB.ini 20990 2011-03-18 16:42:30Z infograf768 $' in response:
             return '1.6.5'
-        elif response.text.__contains__('$Id: en-GB.ini 20990 2011-03-18 16:42:30Z infograf768 $'):
+        elif '$Id: en-GB.ini 20990 2011-03-18 16:42:30Z infograf768 $' in response:
             return '1.7.1'
-        elif response.text.__contains__('$Id: en-GB.ini 22183 2011-09-30 09:04:32Z infograf768 $'):
+        elif '$Id: en-GB.ini 22183 2011-09-30 09:04:32Z infograf768 $' in response:
             return '1.7.3'
-        elif response.text.__contains__('$Id: en-GB.ini 22183 2011-09-30 09:04:32Z infograf768 $'):
+        elif '$Id: en-GB.ini 22183 2011-09-30 09:04:32Z infograf768 $' in response:
             return '1.7.5'
 
         '''finally check the xml pages of this site'''
