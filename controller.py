@@ -29,8 +29,9 @@ class Controller(object):
         except Exception as e:
             print(e)
 
-    def check_platform(self, domain, cache):
+    def check_platform(self, domain, cache, platform=None):
         """
+        :param platform:string. the user know platform is the website, he looks for the version.
         :param cache: boolean. weather user want to use cache or not.
         :param domain: string. the domain that the user want to check.
         if user want record from cache then check if it exist in db
@@ -41,21 +42,27 @@ class Controller(object):
         try:
             # user don't want record from db at all
             if not cache:
-                if self._mydb.select(domain) is not None:
+                if len(self._mydb.select(domain)) > 0:
                     self._mydb.delete(domain)
-                sol = self._model.check_platform(domain)
+                if platform is None:
+                    sol = self._model.check_platform(domain)
+                else:
+                    sol = self._model.check_platform(domain, platform)
                 if not sol[0]:
                     return sol[1]
                 else:
                     self._mydb.insert_data(domain=domain, platform=sol[0], version=sol[1])
-                    return str(self._mydb.select(domain))
+                    return self._mydb.select(domain)
             # user want record from db
             else:
                 record = self._mydb.select(domain)
                 # record not found, run this method again with no cache-check
-                if record is None:
+                if not record:
                     cache = False
-                    self.check_platform(domain, cache)
+                    if platform is None:
+                        return self.check_platform(domain, cache)
+                    else:
+                        return self.check_platform(domain, cache, platform)
                 # record found
                 else:
                     # if date is relevant(last check less then 6 month)
@@ -64,7 +71,10 @@ class Controller(object):
                     # date is not relevant, run this method again with no cache-check
                     else:
                         cache = False
-                        self.check_platform(domain, cache)
+                        if platform is None:
+                            return self.check_platform(domain, cache)
+                        else:
+                            return self.check_platform(domain, cache, platform)
         except Exception as e:
             print(e)
 
