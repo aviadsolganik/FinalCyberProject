@@ -3,7 +3,6 @@ from flask import Flask, render_template, request
 from controller import Controller
 
 app = Flask(__name__)
-
 controller = Controller()
 
 
@@ -44,7 +43,12 @@ def submit():
             platform = solution[0][2]
             version = solution[0][3]
             date = get_date(solution[0][4])
-            sol = str(domain) + "\n" + str(platform) + "\n" + str(version) + "\n" + date
+            if str(platform) == 'SquareSpace':
+                ver = str(version).split(",")
+                ver_for_client = 'TemplateId: ' + ver[0] + "\n" + 'version: ' + ver[1]
+                sol = str(domain) + "\n" + str(platform) + "\n" + ver_for_client + "\n" + date
+            else:
+                sol = str(domain) + "\n" + str(platform) + "\n" + str(version) + "\n" + date
             return render_template("home.html", s=sol)
     except Exception as e:
         print(e)
