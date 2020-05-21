@@ -1,16 +1,24 @@
 import datetime
 # noinspection PyUnresolvedReferences
 from xml.dom import minidom
+
+from JOOMLADetector import JOOMLADetector
 from MyDB import MyDB
+from Squarespace.squarespace_detector import SquareSpaceDetector
+from WP.wp_detector import WPDetector
 from model import Model
 
 
 class Controller(object):
 
     def __init__(self):
+        wordpress_detector = WPDetector()
+        joomla_detector = JOOMLADetector()
+        squarespace_detector = SquareSpaceDetector()
+        detectors = [wordpress_detector, joomla_detector, squarespace_detector]
         self._mydb = MyDB()
         self._mydb.connect()
-        self._model = Model()
+        self._model = Model(detectors)
 
     def read_xml(self, xml_file_path):
         """
