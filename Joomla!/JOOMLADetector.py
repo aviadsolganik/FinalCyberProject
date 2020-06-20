@@ -1,32 +1,24 @@
 import re
+from multiprocessing.pool import ThreadPool
+from urllib.parse import urljoin
 
 import requests
-
+import xml.etree.ElementTree as ET
+from bs4 import BeautifulSoup as bs
 from WP.https_request_handler import HTTPRequestHandler
 from WP.proxy import Proxy
-
-_JOOMLA_DETECTABLE_URLS = ["", "/?option=com_content&view=category&id=1&format=feed",
-                           "/?format=feed", "/language/en-GB/en-GB.ini", "/components/com_mailto/mailto.xml",
-                           "/components/com_wrapper/wrapper.xml", "/htaccess.txt", "/language/en-GB/en-GB.xml",
-                           "/language/en-GB/install.xml", "/templates/protostar/templateDetails.xml",
-                           "/web.config.txt"]
-_JOOMLA_DETECTABLE_STR = ['generator="joomla! - open source content management"',
-                          '<meta name="generator" content="joomla!',
-                          '<generator>joomla! - open source content management</generator>',
-                          'joomla! project', '<authorurl>www.joomla.org</authorurl>',
-                          'generator="joomla! 1.5 - open source content management"',
-                          '<generator>joomla! 1.5 - open source content management</generator>']
+from platformsdetector import PlatformsDetector
 
 
-class JOOMLADetector(object):
+class JOOMLADetector(PlatformsDetector):
 
-    def __init__(self, domain, proxies=None):
-        '''
+    def __init__(self, proxies=None):
+        """
         Keep here the domain and the test state (tested URLs, detected versions, etc) using protected attributes
-        :param domain:
         :param proxies: working via HTTP proxies
-        '''
-        self._domain = domain
+        """
+        super().__init__(proxies)
+        self._domain = ""
         if proxies is None:
             self._proxies = proxies
         else:
@@ -39,11 +31,14 @@ class JOOMLADetector(object):
             except Exception as e:
                 print(e)
             self._proxies = tmp
-        self._urls = _JOOMLA_DETECTABLE_URLS
 
-    def detect(self, retries=0, timeout=5, aggressive=False, urls=None, proxies=None):
+    def get_platform_name(self):
+        return "Joomla"
+
+    def detect(self, domain, retries=0, timeout=5, aggressive=False, urls=None, proxies=None):
         """
         This function detects if the website on the domain runs over joomla. if it is, it will detect the version
+        :param domain:
         :param aggressive: if aggressive is False, the maximal number of HTTP requests is len(urls) + 2
         :param urls: URLs to analyze; make sure the URLs are relevant for the domain
         :param proxies: working via HTTP proxies. If None, the constructor's proxies are used (if any)
@@ -52,19 +47,21 @@ class JOOMLADetector(object):
         :return: a tuple: (whether the domain operates over JOOMLA!, its version)
         """
         try:
-            if urls is None:
-                urls = self._urls
+            self._domain = domain
             if proxies is None:
                 proxies = self._proxies
             if not aggressive:
-                if self.is_joomla(urls=urls, proxies=proxies, timeout=timeout, retries=retries):
-                    return 'True', self.get_version(timeout=timeout, retries=retries)
+                if self.is_joomla(proxies=proxies, timeout=timeout, retries=retries):
+                    return 'Joomla', True, self.get_version(timeout=timeout, retries=retries)
             else:
-                if self.is_joomla(urls=urls, proxies=proxies, retries=3, timeout=5):
-                    return 'True', self.get_version(timeout=timeout, retries=retries)
-            return 'False', 'probably it is not a Joomla! website'
+                if self.is_joomla(proxies=proxies, retries=3, timeout=5):
+                    return 'Joomla', True, self.get_version(timeout=timeout, retries=retries)
+            return 'Joomla', False, 'probably it is not a Joomla! website'
         except Exception as e:
             print(e)
+
+    def set_domain(self, domain):
+        self._domain = domain
 
     def is_joomla(self, urls=None, proxies=None, timeout=5, retries=0):
         """
@@ -76,41 +73,22 @@ class JOOMLADetector(object):
         :return: boolean: (whether the domain operates over JOOMLA!)
         """
         try:
-            '''figure out if this site is http or https'''
             r = HTTPRequestHandler().send_http_request(method='get', url='http://' + str(self._domain))
             url = r.url
-            if not urls:
-                urls = _JOOMLA_DETECTABLE_URLS
-            valuable_count = 0
-            unvaluable_count = 0
-            for u in urls:
-                complete_url = url + u
-                http_handler = HTTPRequestHandler(proxies=proxies, retries=retries, timeout=timeout)
-                response = http_handler.send_http_request(method='get', url=complete_url)
-                find_url = False
-                if response is None:
-                    continue
-                if str(response.status_code) != '200':
-                    continue
-                else:
-                    for s in _JOOMLA_DETECTABLE_STR:
-                        if s in response.text.lower():
-                            find_url = True
-                            valuable_count += 1
-                    if not find_url:
-                        if 'joomla' in response.text.lower():
-                            unvaluable_count += 1
-            if valuable_count > 2:
-                return True
-            if unvaluable_count > 3:
-                return True
-            '''finally if i cant detect whether it is joomla or not'''
-            url = 'http://jornot.com/index.php?check-site=' + str(self._domain)
-            http_handler = HTTPRequestHandler(proxies=proxies, retries=retries, timeout=15)
-            response = http_handler.send_http_request(method='get', url=url)
-            if response is not None:
-                if 'Yes, this is Joomla!' in response.text or 'Great, this is Joomla!' in response.text:
+            functions = [self.css_jss_detector, self.directory_detector,
+                         self.strings_detector, self.template_details_xml_detector]
+            pool = ThreadPool(4)
+            optional_results = []
+            for function in functions:
+                optional_results.append(pool.apply(function, args=(url,)))
+                if True in optional_results:
+                    pool.close()
+                    pool.join()
                     return True
+                if optional_results.count(False) == 3:
+                    break
+            pool.close()
+            pool.join()
             return False
         except Exception as e:
             print(e)
@@ -178,32 +156,232 @@ class JOOMLADetector(object):
 
             '''finally check the xml pages of this site'''
             version = ""
-            temp = ""
             xml_version = ["/administrator/manifests/files/joomla.xml",
-                           "/language/en-GB/en-GB.xml", "/modules/custom.xml"]
-            for xml in xml_version:
-                complete_url = url + xml
-                http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
-                response = http_handler.send_http_request(method='get', url=complete_url)
-                if response is None:
+                           "/language/en-GB/en-GB.xml", "/modules/custom.xml",
+                           '/components/com_mailto/mailto.xml',
+                           '/components/com_wrapper/wrapper.xml',
+                           '/language/en-GB/install.xml']
+            xml = []
+            for x in xml_version:
+                complete_url = url + x
+                try:
+                    http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
+                    r = http_handler.send_http_request(method='get', url=complete_url)
+                    root = ET.fromstring(r.text)
+                    for child in root.iter('version'):
+                        xml.append(child.text)
+                except Exception as e:
+                    print(e)
                     continue
-                if str(response.status_code) != ('200' or '403' or '401'):
-                    continue
-                else:
-                    start_res = re.search('<version>', response.text)
-                    end_res = re.search('</version>', response.text)
-                    if start_res is None or end_res is None:
-                        continue
-                    temp = response.text[start_res.end():end_res.start()]
-                    if version:
-                        numbers_of_temp = temp.split('.')
-                        numbers_of_version = version.split('.')
-                        if numbers_of_temp[2] > numbers_of_version[2]:
-                            version = temp
-                    else:
-                        version = temp
-            if version:
-                return version
-            return 'version not found'
+            try:
+                version = max(xml)
+            except Exception as e:
+                print(e)
+                return 'version not found'
+            return version
+        except Exception as e:
+            print(e)
+
+    # all detectors functions
+    def directory_detector(self, url):
+        try:
+            count = 0
+            directories = ['/administrator/', '/cache/', '/components/', '/includes/',
+                           '/installation/', '/language/', '/libraries/', '/logs/', '/media/', '/modules/',
+                           '/plugins/', '/templates/', '/tmp/']
+            for directory in directories:
+                full_url = url + directory
+                r = HTTPRequestHandler().send_http_request(method='get', url=full_url)
+                if str(r.status_code) == '200' and r.url == full_url:
+                    count += 1
+            if count > 6:
+                return True
+            return False
+        except Exception as e:
+            print(e)
+
+    def template_details_xml_detector(self, url):
+        try:
+            url = url + '/templates/protostar/templateDetails.xml'
+            r = HTTPRequestHandler().send_http_request(method='get', url=url)
+            # get all files from /templates/protostar/templateDetails.xml
+            template_folder = ['css', 'html', 'images', 'img', 'js', 'language', 'less']
+            folders_in_xml = []
+            if str(r.status_code) == '200':
+                root = ET.fromstring(r.text)
+                for child in root.iter('folder'):
+                    folders_in_xml.append(child.text)
+            if folders_in_xml == template_folder:
+                return True
+            return False
+        except Exception as e:
+            print(e)
+
+    def robots_txt_detector(self, url):
+        try:
+            url = url + '/robots.txt'
+            r = HTTPRequestHandler().send_http_request(method='get', url=url)
+            templates = ["User-agent: *",
+                         "Disallow: /administrator/",
+                         "Disallow: /bin/",
+                         "Disallow: /cache/",
+                         "Disallow: /cli/",
+                         "Disallow: /components/",
+                         "Disallow: /includes/",
+                         "Disallow: /installation/",
+                         "Disallow: /language/",
+                         "Disallow: /layouts/",
+                         "Disallow: /libraries/",
+                         "Disallow: /logs/",
+                         "Disallow: /modules/",
+                         "Disallow: /plugins/",
+                         "Disallow: /tmp/"]
+            if all(x in r.text for x in templates):
+                return True
+            return False
+        except Exception as e:
+            print(e)
+
+    def css_jss_detector(self, url):
+        try:
+            r = HTTPRequestHandler().send_http_request(method='get', url=url)
+            # initialize a session
+            session = requests.Session()
+            # set the User-agent as a regular browser
+            session.headers["User-Agent"] = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " \
+                                            "Chrome/44.0.2403.157 Safari/537.36 "
+            # get the HTML content
+            html = session.get(url).content
+            # parse HTML using beautiful soup
+            soup = bs(html, "html.parser")
+            # get the JavaScript files
+            script_files = []
+            css_files = []
+            count = 0
+            for script in soup.find_all("script"):
+                if script.attrs.get("src"):
+                    # if the tag has the attribute 'src'
+                    script_url = urljoin(url, script.attrs.get("src"))
+                    script_files.append(script_url)
+                    if '/media' in script_url:
+                        count += 1
+                        break
+            for css in soup.find_all("link"):
+                if css.attrs.get("href"):
+                    # if the link tag has the 'href' attribute
+                    css_url = urljoin(url, css.attrs.get("href"))
+                    css_files.append(css_url)
+                    # print(css_url)
+                    if '/templates' in css_url:
+                        count += 1
+                        break
+            if count == 2:
+                return True
+            return False
+        except Exception as e:
+            print(e)
+
+    def xml_parser(self, url):
+        try:
+            xml = []
+            r = HTTPRequestHandler().send_http_request(method='get', url=url)
+            root = ET.fromstring(r.text)
+            for child in root.iter('author'):
+                xml.append(child.text)
+            for child in root.iter('authorEmail'):
+                xml.append(child.text)
+            for child in root.iter('authorUrl'):
+                xml.append(child.text)
+            strings = ['Joomla! Project', 'admin@joomla.org', 'www.joomla.org']
+            if xml == strings:
+                return True
+            return False
+        except Exception as e:
+            print(e)
+
+    def malito_xml_detector(self, url):
+        try:
+            url = url + '/components/com_mailto/mailto.xml'
+            return self.xml_parser(url)
+        except Exception as e:
+            print(e)
+
+    def wrapper_xml_detector(self, url):
+        try:
+            url = url + '/components/com_wrapper/wrapper.xml'
+            return self.xml_parser(url)
+        except Exception as e:
+            print(e)
+
+    def language_install_xml_detector(self, url):
+        try:
+            url = url + '/language/en-GB/install.xml'
+            return self.xml_parser(url)
+        except Exception as e:
+            print(e)
+
+    def language_xml_detector(self, url):
+        try:
+            url = url + '/language/en-GB/en-GB.xml'
+            return self.xml_parser(url)
+        except Exception as e:
+            print(e)
+
+    def index_php_detector(self, url):
+        try:
+            url = url + '/index.php'
+            strings = ['<meta name="generator" content="Joomla! - Open Source Content Management" />',
+                       '<meta name="Generator" content="Joomla! - Copyright (C) 2005 - 2008 Open Source Matters.']
+            r = HTTPRequestHandler().send_http_request(method='get', url=url)
+            source = r.text.replace(' ', '')
+            for s in strings:
+                if s.replace(' ', '') in source:
+                    return True
+            return False
+        except Exception as e:
+            print(e)
+
+    def source_code_and_format_equal_feed_detector(self, url):
+        try:
+            urls = ['', '/?option=com_content&view=category&id=1&format=feed',
+                    '/?format=feed']
+            strings = ['<!-- generator="Joomla! 1.5 - Open Source Content Management" -->',
+                       '<generator>Joomla! 1.5 - Open Source Content Management</generator>',
+                       '<meta name="Generator" content="Joomla! - Copyright (C) 2005 - 2008 Open Source Matters.',
+                       '<generator>Joomla! - Open Source Content Management</generator>',
+                       '<!-- generator="Joomla! - Open Source Content Management" -->',
+                       '<meta name="generator" content="Joomla! - Open Source Content Management" />',
+                       '<meta name="generator" content="Joomla! 1.5 - Open Source Content Management"/>']
+            solution = []
+            for u in urls:
+                u = url + u
+                r = HTTPRequestHandler().send_http_request(method='get', url=u)
+                source = r.text.replace(' ', '')
+                for s in strings:
+                    if s.replace(' ', '') in source:
+                        solution.append(True)
+                        break
+            if len(solution) >= 2:
+                return True
+            return False
+        except Exception as e:
+            print(e)
+
+    def strings_detector(self, url):
+        try:
+            functions = [self.source_code_and_format_equal_feed_detector,
+                         self.index_php_detector, self.language_xml_detector,
+                         self.language_install_xml_detector, self.wrapper_xml_detector,
+                         self.malito_xml_detector, self.robots_txt_detector]
+            pool = ThreadPool(7)
+            optional_results = []
+            for function in functions:
+                optional_results.append(pool.apply(function, args=(url,)))
+            pool.close()
+            pool.join()
+            sum_of_true = sum(bool(x) for x in optional_results)
+            if sum_of_true > 3:
+                return True
+            return False
         except Exception as e:
             print(e)
