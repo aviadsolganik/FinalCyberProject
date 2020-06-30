@@ -1,3 +1,4 @@
+import concurrent.futures
 import re
 from multiprocessing.pool import ThreadPool
 from urllib.parse import urljoin
@@ -77,18 +78,13 @@ class JOOMLADetector(PlatformsDetector):
             url = r.url
             functions = [self.css_jss_detector, self.directory_detector,
                          self.strings_detector, self.template_details_xml_detector]
-            pool = ThreadPool(4)
             optional_results = []
-            for function in functions:
-                optional_results.append(pool.apply(function, args=(url,)))
-                if True in optional_results:
-                    pool.close()
-                    pool.join()
-                    return True
-                if optional_results.count(False) == 3:
-                    break
-            pool.close()
-            pool.join()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_to_func = {executor.submit(func, url): func for func in functions}
+                for future in concurrent.futures.as_completed(future_to_func):
+                    optional_results.append(future.result())
+            if True in optional_results:
+                return True
             return False
         except Exception as e:
             print(e)
@@ -104,64 +100,70 @@ class JOOMLADetector(PlatformsDetector):
             '''figure out if this site is http or https'''
             r = HTTPRequestHandler().send_http_request(method='get', url='http://' + str(self._domain))
             url = r.url
-
+            version =[]
             '''check source code first'''
-            http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
-            response = http_handler.send_http_request(method='get', url=url).text
+            response = r.text
             if 'Copyright (C) 2005 - 2008 Open Source Matters' in response or \
                     'Copyright (C) 2005 - 2007 Open Source Matters' in response:
-                return '1.0'
+                version.append('1.0')
             elif 'Joomla! 1.5 - Open Source Content Management' in response:
-                return '1.5'
+                version.append('1.5')
 
             '''check response with - /templates/system/css/system.css'''
-            templates_url = url + '/templates/system/css/system.css'
-            http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
-            response = http_handler.send_http_request(method='get', url=templates_url).text
-            if 'OpenID icon style' in response or \
-                    '@copyright Copyright (C) 2005 – 2010 Open Source Matters' in response:
-                return '1.0'
-            elif '@version $Id: system.css 20196 2011-01-09 02:40:25Z ian $' in response:
-                return '1.6'
-            elif '@version $Id: system.css 21322 2011-05-11 01:10:29Z dextercowley $' in response:
-                return '1.7'
-            elif ' @copyright Copyright (C) 2005 – 2012 Open Source Matters' in response:
-                return '2.5'
+            try:
+                templates_url = url + '/templates/system/css/system.css'
+                http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
+                response = http_handler.send_http_request(method='get', url=templates_url).text
+                if 'OpenID icon style' in response or \
+                        '@copyright Copyright (C) 2005 – 2010 Open Source Matters' in response:
+                    version.append('1.0')
+                elif '@version $Id: system.css 20196 2011-01-09 02:40:25Z ian $' in response:
+                    version.append('1.6')
+                elif '@version $Id: system.css 21322 2011-05-11 01:10:29Z dextercowley $' in response:
+                    version.append('1.7')
+                elif ' @copyright Copyright (C) 2005 – 2012 Open Source Matters' in response:
+                    version.append('2.5')
+            except Exception as e:
+                print(e)
 
             '''check response with - /media/system/js/mootools-more.js'''
-            mootools_url = url + '/media/system/js/mootools-more.js'
-            http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
-            response = http_handler.send_http_request(method='get', url=mootools_url).text
-            if 'MooTools.More={version:”1.3.0.1″' in response:
-                return '1.6'
-            elif 'MooTools.More={version:”1.3.2.1″' in response:
-                return '1.7'
+            try:
+                mootools_url = url + '/media/system/js/mootools-more.js'
+                http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
+                response = http_handler.send_http_request(method='get', url=mootools_url).text
+                if 'MooTools.More={version:”1.3.0.1″' in response:
+                    version.append('1.6')
+                elif 'MooTools.More={version:”1.3.2.1″' in response:
+                    version.append('1.7')
+            except Exception as e:
+                print(e)
 
             '''check response with - /language/en-GB/en-GB.ini'''
-            language_url = url + '/language/en-GB/en-GB.ini'
-            http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
-            response = http_handler.send_http_request(method='get', url=language_url).text
-            if '# $Id: en-GB.ini 11391 2009-01-04 13:35:50Z ian $' in response:
-                return '1.5.26'
-            elif '$Id: en-GB.ini 20196 2011-01-09 02:40:25Z ian $' in response:
-                return '1.6.0'
-            elif '$Id: en-GB.ini 20990 2011-03-18 16:42:30Z infograf768 $' in response:
-                return '1.6.5'
-            elif '$Id: en-GB.ini 20990 2011-03-18 16:42:30Z infograf768 $' in response:
-                return '1.7.1'
-            elif '$Id: en-GB.ini 22183 2011-09-30 09:04:32Z infograf768 $' in response:
-                return '1.7.3'
-            elif '$Id: en-GB.ini 22183 2011-09-30 09:04:32Z infograf768 $' in response:
-                return '1.7.5'
+            try:
+                language_url = url + '/language/en-GB/en-GB.ini'
+                http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
+                response = http_handler.send_http_request(method='get', url=language_url).text
+                if '# $Id: en-GB.ini 11391 2009-01-04 13:35:50Z ian $' in response:
+                    version.append('1.5.26')
+                elif '$Id: en-GB.ini 20196 2011-01-09 02:40:25Z ian $' in response:
+                    version.append('1.6.0')
+                elif '$Id: en-GB.ini 20990 2011-03-18 16:42:30Z infograf768 $' in response:
+                    version.append('1.6.5')
+                elif '$Id: en-GB.ini 20990 2011-03-18 16:42:30Z infograf768 $' in response:
+                    version.append('1.7.1')
+                elif '$Id: en-GB.ini 22183 2011-09-30 09:04:32Z infograf768 $' in response:
+                    version.append('1.7.3')
+                elif '$Id: en-GB.ini 22183 2011-09-30 09:04:32Z infograf768 $' in response:
+                    version.append('1.7.5')
+            except Exception as e:
+                print(e)
 
             '''finally check the xml pages of this site'''
-            version = ""
             xml_version = ["/administrator/manifests/files/joomla.xml",
                            "/language/en-GB/en-GB.xml", "/modules/custom.xml",
                            '/components/com_mailto/mailto.xml',
                            '/components/com_wrapper/wrapper.xml',
                            '/language/en-GB/install.xml']
-            xml = []
             for x in xml_version:
                 complete_url = url + x
                 try:
@@ -169,18 +171,30 @@ class JOOMLADetector(PlatformsDetector):
                     r = http_handler.send_http_request(method='get', url=complete_url)
                     root = ET.fromstring(r.text)
                     for child in root.iter('version'):
-                        xml.append(child.text)
+                        version.append(child.text)
                 except Exception as e:
                     print(e)
                     continue
+            if not version:
+                try:
+                    r = requests.get(url + '/README.txt')
+                    line = r.text.splitlines()
+                    if 'version history - https://docs.joomla.org/' in line[3]:
+                        start = line[3].find('Joomla!')
+                        end = line[3].find('version')
+                        start += len('joomla!')
+                        version.append(line[3][start+1:end-1])
+                except Exception as e:
+                    print(e)
             try:
-                version = max(xml)
+                final_version = max(version)
             except Exception as e:
                 print(e)
                 return 'version not found'
-            return version
+            return final_version
         except Exception as e:
             print(e)
+            return 'version not found'
 
     # all detectors functions
     def directory_detector(self, url):
@@ -189,16 +203,28 @@ class JOOMLADetector(PlatformsDetector):
             directories = ['/administrator/', '/cache/', '/components/', '/includes/',
                            '/installation/', '/language/', '/libraries/', '/logs/', '/media/', '/modules/',
                            '/plugins/', '/templates/', '/tmp/']
+            administrator_str = '<meta name="generator" content="Joomla! - Open Source Content Management" />'
             for directory in directories:
                 full_url = url + directory
-                r = HTTPRequestHandler().send_http_request(method='get', url=full_url)
-                if str(r.status_code) == '200' and r.url == full_url:
-                    count += 1
-            if count > 6:
+                try:
+                    r = HTTPRequestHandler().send_http_request(method='get', url=full_url)
+                    if directory == '/administrator/' and r.ok and r.url == full_url:
+                        joomla_count = r.text.lower().count('joomla')
+                        if joomla_count >= 6:
+                            if administrator_str.replace(' ', '') in r.text.replace(' ', ''):
+                                count += 4
+                            elif r.text == '<!DOCTYPE html><title></title>\n':
+                                count += 2
+                    elif r.ok and r.text == '<!DOCTYPE html><title></title>\n' and r.url == full_url:
+                        count += 1
+                except Exception as e:
+                    print(e)
+            if count >= 6:
                 return True
             return False
         except Exception as e:
             print(e)
+            return False
 
     def template_details_xml_detector(self, url):
         try:
@@ -216,6 +242,7 @@ class JOOMLADetector(PlatformsDetector):
             return False
         except Exception as e:
             print(e)
+            return False
 
     def robots_txt_detector(self, url):
         try:
@@ -241,17 +268,12 @@ class JOOMLADetector(PlatformsDetector):
             return False
         except Exception as e:
             print(e)
+            return False
 
     def css_jss_detector(self, url):
         try:
-            r = HTTPRequestHandler().send_http_request(method='get', url=url)
-            # initialize a session
-            session = requests.Session()
-            # set the User-agent as a regular browser
-            session.headers["User-Agent"] = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " \
-                                            "Chrome/44.0.2403.157 Safari/537.36 "
             # get the HTML content
-            html = session.get(url).content
+            html = requests.get(url, timeout=10).content
             # parse HTML using beautiful soup
             soup = bs(html, "html.parser")
             # get the JavaScript files
@@ -263,7 +285,7 @@ class JOOMLADetector(PlatformsDetector):
                     # if the tag has the attribute 'src'
                     script_url = urljoin(url, script.attrs.get("src"))
                     script_files.append(script_url)
-                    if '/media' in script_url:
+                    if '/media/' in script_url:
                         count += 1
                         break
             for css in soup.find_all("link"):
@@ -272,7 +294,7 @@ class JOOMLADetector(PlatformsDetector):
                     css_url = urljoin(url, css.attrs.get("href"))
                     css_files.append(css_url)
                     # print(css_url)
-                    if '/templates' in css_url:
+                    if '/templates/' in css_url:
                         count += 1
                         break
             if count == 2:
@@ -280,6 +302,7 @@ class JOOMLADetector(PlatformsDetector):
             return False
         except Exception as e:
             print(e)
+            return False
 
     def xml_parser(self, url):
         try:
@@ -298,6 +321,7 @@ class JOOMLADetector(PlatformsDetector):
             return False
         except Exception as e:
             print(e)
+            return False
 
     def malito_xml_detector(self, url):
         try:
@@ -340,6 +364,7 @@ class JOOMLADetector(PlatformsDetector):
             return False
         except Exception as e:
             print(e)
+            return False
 
     def source_code_and_format_equal_feed_detector(self, url):
         try:
@@ -355,12 +380,15 @@ class JOOMLADetector(PlatformsDetector):
             solution = []
             for u in urls:
                 u = url + u
-                r = HTTPRequestHandler().send_http_request(method='get', url=u)
-                source = r.text.replace(' ', '')
-                for s in strings:
-                    if s.replace(' ', '') in source:
-                        solution.append(True)
-                        break
+                try:
+                    r = HTTPRequestHandler().send_http_request(method='get', url=u)
+                    source = r.text.replace(' ', '')
+                    for s in strings:
+                        if s.replace(' ', '') in source:
+                            solution.append(True)
+                            break
+                except Exception as e:
+                    print(e)
             if len(solution) >= 2:
                 return True
             return False
@@ -373,12 +401,11 @@ class JOOMLADetector(PlatformsDetector):
                          self.index_php_detector, self.language_xml_detector,
                          self.language_install_xml_detector, self.wrapper_xml_detector,
                          self.malito_xml_detector, self.robots_txt_detector]
-            pool = ThreadPool(7)
             optional_results = []
-            for function in functions:
-                optional_results.append(pool.apply(function, args=(url,)))
-            pool.close()
-            pool.join()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_to_func = {executor.submit(func, url): func for func in functions}
+                for future in concurrent.futures.as_completed(future_to_func):
+                    optional_results.append(future.result())
             sum_of_true = sum(bool(x) for x in optional_results)
             if sum_of_true > 3:
                 return True
