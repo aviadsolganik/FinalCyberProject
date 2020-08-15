@@ -1,3 +1,4 @@
+import concurrent.futures
 from multiprocessing.pool import ThreadPool
 
 
@@ -14,11 +15,10 @@ class Model(object):
         try:
             optional_results = []
             if platform is None:
-                pool = ThreadPool(4)
-                for detector in self.detectors:
-                    optional_results.append(pool.apply(detector.detect, args=(domain,)))
-                pool.close()
-                pool.join()
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future_to_func = {executor.submit(detector.detect, domain): detector for detector in self.detectors}
+                    for future in concurrent.futures.as_completed(future_to_func):
+                        optional_results.append(future.result())
             else:
                 for detector in self.detectors:
                     if detector.get_platform_name() == platform:
