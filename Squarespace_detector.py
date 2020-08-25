@@ -67,23 +67,30 @@ class squarspace_detector(object):
                 return False
             else:
                 url = url
-                http_handler = HTTPRequestHandler(proxies=proxies, retries=retries, timeout=15)
-                r = http_handler.send_http_request(method='get', url=url)
+                #http_handler = HTTPRequestHandler(proxies=proxies, retries=retries, timeout=15)
+                #r = http_handler.send_http_request(method='get', url=url)
                 if r.status_code is (200 or 403):
-                    if r.text.find('<!-- This is Squarespace. -->') > -1:
-                        if r.text.find('templateId') > -1 and r.text.find('templateVersion') > -1:
-                            return True
-                    else:
-                        return False
-
-                else:
+                    if self.public_route_search(r) or self.non_public_route_search(r):
+                        return True
                     return False
+
+    def public_route_search(self, r):
+
+        if r.text.find('<!-- This is Squarespace. -->') > -1:
+            if r.text.find('templateId') > -1 and r.text.find('templateVersion') > -1:
+                return True
+
+    def non_public_route_search(self, r):
+
+        if 'Squarespace' in r.headers._store.get('server'):
+            return True
 
     def get_info(self, timeout, retries):
         """
             this function is resposable for checking the template id and version
                       """
-        complete_url = 'https://' + str(self._domain)
+        #complete_url = 'https://' + str(self._domain)
+        complete_url = 'http://' + str(self._domain)
         http_handler = HTTPRequestHandler(proxies=self._proxies, retries=retries, timeout=timeout)
         response = http_handler.send_http_request(method='get', url=complete_url)
         if response is None:
@@ -98,5 +105,3 @@ class squarspace_detector(object):
             return ' ' + 'with the TemplateId: ' + TemplateId + ' ' + 'and it is running on version number: ' + version
         else:
             return False
-
-
